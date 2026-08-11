@@ -384,6 +384,9 @@ const audio = new Audio();
 audio.volume = 0.5;
 let playlist = [];
 let currentSongIndex = 0;
+let musicLoading = true;
+let musicReadyResolve = null;
+const musicReady = new Promise(resolve => { musicReadyResolve = resolve; });
 
 // 检测音乐文件
 async function initMusic() {
@@ -402,6 +405,8 @@ async function initMusic() {
     playlist.sort(() => Math.random() - 0.5);
     playSong(0);
   }
+  musicLoading = false;
+  musicReadyResolve();
 }
 
 function playSong(index) {
@@ -423,12 +428,25 @@ audio.addEventListener('ended', () => {
 
 // 首次交互后播放音乐
 function startMusicOnInteraction() {
-  if (playlist.length === 0) return;
-  audio.play().then(() => {
-    // 播放成功后移除监听
-    document.removeEventListener('touchstart', startMusicOnInteraction);
-    document.removeEventListener('click', startMusicOnInteraction);
-  }).catch(() => {});
+  if (musicLoading) {
+    // 音乐正在加载，等待加载完成后再播放
+    musicReady.then(() => {
+      if (playlist.length > 0) {
+        audio.play().then(() => {
+          document.removeEventListener('touchstart', startMusicOnInteraction);
+          document.removeEventListener('click', startMusicOnInteraction);
+        }).catch(() => {});
+      }
+    });
+  } else {
+    // 音乐已加载，直接播放
+    if (playlist.length > 0) {
+      audio.play().then(() => {
+        document.removeEventListener('touchstart', startMusicOnInteraction);
+        document.removeEventListener('click', startMusicOnInteraction);
+      }).catch(() => {});
+    }
+  }
 }
 document.addEventListener('touchstart', startMusicOnInteraction);
 document.addEventListener('click', startMusicOnInteraction);
