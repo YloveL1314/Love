@@ -422,14 +422,16 @@ audio.addEventListener('ended', () => {
 });
 
 // 首次交互后播放音乐
-let musicStarted = false;
 function startMusicOnInteraction() {
-  if (musicStarted || playlist.length === 0) return;
-  musicStarted = true;
-  audio.play().catch(() => {});
+  if (playlist.length === 0) return;
+  audio.play().then(() => {
+    // 播放成功后移除监听
+    document.removeEventListener('touchstart', startMusicOnInteraction);
+    document.removeEventListener('click', startMusicOnInteraction);
+  }).catch(() => {});
 }
-document.addEventListener('touchstart', startMusicOnInteraction, { once: true });
-document.addEventListener('click', startMusicOnInteraction, { once: true });
+document.addEventListener('touchstart', startMusicOnInteraction);
+document.addEventListener('click', startMusicOnInteraction);
 
 initMusic();
 function closeCamera() { if (currentStream) { currentStream.getTracks().forEach(t => t.stop()); currentStream = null; } }
@@ -487,7 +489,7 @@ async function initMediaPipe() {
   s.textContent = '⏳ 初始化手势识别...';
   try {
     const hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${f}` });
-    hands.setOptions({ maxNumHands:1, modelComplexity:0, minDetectionConfidence:.7, minTrackingConfidence:.6 });
+    hands.setOptions({ maxNumHands:1, modelComplexity:0, minDetectionConfidence:.3, minTrackingConfidence:.3 });
     
     // 防抖计数器
     let openCount = 0, closeCount = 0;
@@ -498,6 +500,13 @@ async function initMediaPipe() {
         // 没检测到手，重置计数
         openCount = 0;
         closeCount = 0;
+        // 调试信息：显示未检测到手
+        const statusEl = document.getElementById('gestureStatus');
+        if (statusEl && statusEl.classList.contains('ready')) {
+          statusEl.textContent = '🔍 未检测到手';
+          clearTimeout(statusEl._hideTimer);
+          statusEl._hideTimer = setTimeout(() => { statusEl.textContent = '✅ 手势已就绪'; }, 1500);
+        }
         return;
       }
       
@@ -509,6 +518,13 @@ async function initMediaPipe() {
         // 手掌太小，可能是误识别
         openCount = 0;
         closeCount = 0;
+        // 调试信息：手掌太小
+        const statusEl = document.getElementById('gestureStatus');
+        if (statusEl && statusEl.classList.contains('ready')) {
+          statusEl.textContent = `🔍 手太小 (${palmWidth.toFixed(2)})`;
+          clearTimeout(statusEl._hideTimer);
+          statusEl._hideTimer = setTimeout(() => { statusEl.textContent = '✅ 手势已就绪'; }, 1500);
+        }
         return;
       }
       
@@ -519,6 +535,13 @@ async function initMediaPipe() {
         // 手部在边缘，忽略
         openCount = 0;
         closeCount = 0;
+        // 调试信息：手部在边缘
+        const statusEl = document.getElementById('gestureStatus');
+        if (statusEl && statusEl.classList.contains('ready')) {
+          statusEl.textContent = `🔍 手在边缘 (${handCenterX.toFixed(2)},${handCenterY.toFixed(2)})`;
+          clearTimeout(statusEl._hideTimer);
+          statusEl._hideTimer = setTimeout(() => { statusEl.textContent = '✅ 手势已就绪'; }, 1500);
+        }
         return;
       }
       
