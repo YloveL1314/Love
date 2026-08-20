@@ -73,49 +73,58 @@ scene.add(new THREE.DirectionalLight(0xff69b4, 0.4).translateX(-5).translateY(-3
 const coreLight = new THREE.PointLight(0xff69b4, 3, 15); scene.add(coreLight);
 const coreLight2 = new THREE.PointLight(0xffd700, 1.5, 10); scene.add(coreLight2);
 
-// ============ 优化：3D立体心形点分布 ============
+// ============ 优化：内部铺满 + 3D立体厚度 ============
 function genHeartPos(n) {
   const pos = [], s = HEART_SCALE / 3.5;
   const MAX_DEPTH = 1.2 * s; // 心形最大厚度（可调整，越大越鼓）
   
-  // 前面37张
+  // 前面37张：保留原有的内部铺满逻辑，并增加基于距离的Z轴厚度
   for (let i = 0; i < FRONT_COUNT; i++) {
-    // 黄金比例打乱顺序，避免同心圆感
-    const t = ((i * 0.618033988749895) % 1) * Math.PI * 2;
+    const t = (i / FRONT_COUNT) * Math.PI * 2;
     const su = Math.sin(t);
     const hx = 16 * su * su * su;
     const hy = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
     
-    // 距离中心的归一化比例 (0~1)
-    const maxR = Math.hypot(16, 13 + 5 + 2 + 1); // 心形最大半径约30.77
+    // 保留原有的 r 参数，让照片铺满心形内部
+    const r = 0.3 + 0.6 * ((i * 0.618033988749895) % 1); 
+    
+    const x = hx * 0.18 * s * r;
+    const y = (hy * 0.18 + 0.3) * s * r;
+    
+    // 计算当前点到心形中心的归一化距离 (0~1)
+    const maxR = Math.hypot(16, 13 + 5 + 2 + 1); 
     const currentR = Math.hypot(hx, hy);
     const normalizedDist = Math.min(currentR / maxR, 1.0);
     
     // 膨胀系数：中心最厚(1)，边缘最薄(0)，使用平滑曲线
     const bulge = Math.pow(1.0 - normalizedDist, 1.5); 
     
-    const x = hx * 0.18 * s;
-    const y = (hy * 0.18 + 0.3) * s;
-    const z = MAX_DEPTH * bulge; // 基于距离的3D厚度
+    // Z轴厚度：基础厚度 + 越靠中心越鼓起
+    const zBase = 0.8 * s;
+    const z = (zBase * (0.5 + r * 0.5)) + MAX_DEPTH * bulge * r;
     
     pos.push(new THREE.Vector3(x, y, z));
   }
   
-  // 后面37张
+  // 后面37张：同理，Z轴为负
   for (let i = 0; i < BACK_COUNT; i++) {
-    const t = ((i * 0.618033988749895 + 0.5) % 1) * Math.PI * 2; // 偏移0.5错开前面
+    const t = (i / BACK_COUNT) * Math.PI * 2;
     const su = Math.sin(t);
     const hx = 16 * su * su * su;
     const hy = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+    
+    const r = 0.3 + 0.6 * ((i * 0.618033988749895 + 0.5) % 1); 
+    
+    const x = hx * 0.18 * s * r;
+    const y = (hy * 0.18 + 0.3) * s * r;
     
     const maxR = Math.hypot(16, 13 + 5 + 2 + 1);
     const currentR = Math.hypot(hx, hy);
     const normalizedDist = Math.min(currentR / maxR, 1.0);
     const bulge = Math.pow(1.0 - normalizedDist, 1.5);
     
-    const x = hx * 0.18 * s;
-    const y = (hy * 0.18 + 0.3) * s;
-    const z = -MAX_DEPTH * bulge; // 负Z方向鼓起
+    const zBase = -0.8 * s;
+    const z = (zBase * (0.5 + r * 0.5)) - MAX_DEPTH * bulge * r;
     
     pos.push(new THREE.Vector3(x, y, z));
   }
@@ -136,7 +145,6 @@ function makePlaceholder(i) {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 
-// 修复：递归尝试所有路径，确保图片能加载
 function loadRealTex(i, mesh) {
   const paths = [`photos/${i+1}.jpg`,`photos/${i+1}.png`,`photos/${i+1}.jpeg`,`photos/photo_${i+1}.jpg`,`photos/IMG_${String(i+1).padStart(4,'0')}.jpg`];
   function tryLoad(index) {
@@ -194,7 +202,6 @@ for (let i = 0; i < PHOTO_COUNT; i++) {
     lookTarget.add(tilt.multiplyScalar(0.3));
     g.lookAt(lookTarget);
   }
-  // 修复：预分配 tempVec 避免每帧 new 对象引发 GC 卡顿
   photos.push({ 
     mesh: g, photoMesh: pm, heartPos: pos.clone(), heartQuat: g.quaternion.clone(), 
     explodedPos: new THREE.Vector3(), explodedQuat: new THREE.Quaternion(), 
@@ -246,13 +253,11 @@ const raycaster = new THREE.Raycaster(), mouse2 = new THREE.Vector2();
 function resetZoom() { 
   photos.forEach(p => { 
     if (p.isCentered) {
-      // 修复：将放大脱离 group 的照片移回 group，防止坐标偏移
       scene.remove(p.mesh);
       photoGroup.add(p.mesh);
     }
     p.zoomScale = 1; 
     p.isCentered = false;
-    // 修复：正确释放临时 MeshBasicMaterial，防止内存泄漏
     if (p._originalMaterial) {
       const matToDispose = p.photoMesh.material;
       p.photoMesh.material = p._originalMaterial;
@@ -594,7 +599,6 @@ function animate() {
     if (explosionProgress < .01) { p.mesh.position.copy(p.heartPos); p.mesh.quaternion.copy(p.heartQuat); p.mesh.scale.setScalar(hbScale * zs); }
     else if (explosionProgress > .99) { p.mesh.position.add(p.velocity); p.velocity.multiplyScalar(.995); p.mesh.rotation.x += p.angularVel.x; p.mesh.rotation.y += p.angularVel.y; p.mesh.rotation.z += p.angularVel.z; p.mesh.position.y += Math.sin(time*p.floatSpeed+p.floatOffset)*p.floatAmplitude; p.mesh.position.x += Math.cos(time*p.floatSpeed*.7+p.floatOffset)*p.floatAmplitude*.5; p.mesh.scale.setScalar(zs); }
     else { 
-      // 修复：复用预分配的 tempVec，避免每帧 new 导致 GC 频繁卡顿
       p.tempVec.lerpVectors(p.heartPos, p.explodedPos, explosionProgress);
       p.mesh.position.lerp(p.tempVec, .08); 
       p.mesh.quaternion.slerpQuaternions(p.heartQuat, p.explodedQuat, explosionProgress); 
