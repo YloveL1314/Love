@@ -35,8 +35,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 
 const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const PHOTO_COUNT = 74;
-const FRONT_COUNT = 37; // 前面照片数
-const BACK_COUNT = 37;  // 后面照片数
+const FRONT_COUNT = 37;
+const BACK_COUNT = 37;
 const HEART_SCALE = 3.5;
 const EXPLOSION_RADIUS = 18;
 const LERP_SPEED = 0.025;
@@ -64,7 +64,7 @@ camera.position.set(0, 0, 12);
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth * 0.75, window.innerHeight * 0.75), 0.8, 0.4, 0.85);
-bloomPass.layers = 1; // Bloom只影响layer 1的物体
+bloomPass.layers = 1;
 composer.addPass(bloomPass);
 
 scene.add(new THREE.AmbientLight(0x332244, 0.6));
@@ -73,48 +73,49 @@ scene.add(new THREE.DirectionalLight(0xff69b4, 0.4).translateX(-5).translateY(-3
 const coreLight = new THREE.PointLight(0xff69b4, 3, 15); scene.add(coreLight);
 const coreLight2 = new THREE.PointLight(0xffd700, 1.5, 10); scene.add(coreLight2);
 
-// ============ 面填充心形点分布（均匀分布，每次相同） ============
+// ============ 优化：3D立体心形点分布 ============
 function genHeartPos(n) {
   const pos = [], s = HEART_SCALE / 3.5;
+  const MAX_DEPTH = 1.2 * s; // 心形最大厚度（可调整，越大越鼓）
   
-  // 前面37张：使用心形参数方程均匀分布
+  // 前面37张
   for (let i = 0; i < FRONT_COUNT; i++) {
-    // 参数t均匀分布在0到2π
-    const t = (i / FRONT_COUNT) * Math.PI * 2;
-    
-    // 心形轮廓点
+    // 黄金比例打乱顺序，避免同心圆感
+    const t = ((i * 0.618033988749895) % 1) * Math.PI * 2;
     const su = Math.sin(t);
     const hx = 16 * su * su * su;
     const hy = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
     
-    // 在中心到轮廓点的连线上采样（使用黄金比例确保均匀）
-    const r = 0.3 + 0.6 * ((i * 0.618033988749895) % 1); // 0.3~0.9的范围
+    // 距离中心的归一化比例 (0~1)
+    const maxR = Math.hypot(16, 13 + 5 + 2 + 1); // 心形最大半径约30.77
+    const currentR = Math.hypot(hx, hy);
+    const normalizedDist = Math.min(currentR / maxR, 1.0);
     
-    const x = hx * 0.18 * s * r;
-    const y = (hy * 0.18 + 0.3) * s * r;
+    // 膨胀系数：中心最厚(1)，边缘最薄(0)，使用平滑曲线
+    const bulge = Math.pow(1.0 - normalizedDist, 1.5); 
     
-    // z方向：中间凹陷，边缘凸起
-    const zBase = 0.8 * s;
-    const z = zBase * (0.5 + r * 0.5);
+    const x = hx * 0.18 * s;
+    const y = (hy * 0.18 + 0.3) * s;
+    const z = MAX_DEPTH * bulge; // 基于距离的3D厚度
     
     pos.push(new THREE.Vector3(x, y, z));
   }
   
-  // 后面37张：类似，但z为负，偏移避免重叠
+  // 后面37张
   for (let i = 0; i < BACK_COUNT; i++) {
-    const t = (i / BACK_COUNT) * Math.PI * 2;
-    
+    const t = ((i * 0.618033988749895 + 0.5) % 1) * Math.PI * 2; // 偏移0.5错开前面
     const su = Math.sin(t);
     const hx = 16 * su * su * su;
     const hy = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
     
-    const r = 0.3 + 0.6 * ((i * 0.618033988749895 + 0.5) % 1); // 偏移0.5
+    const maxR = Math.hypot(16, 13 + 5 + 2 + 1);
+    const currentR = Math.hypot(hx, hy);
+    const normalizedDist = Math.min(currentR / maxR, 1.0);
+    const bulge = Math.pow(1.0 - normalizedDist, 1.5);
     
-    const x = hx * 0.18 * s * r;
-    const y = (hy * 0.18 + 0.3) * s * r;
-    
-    const zBase = -0.8 * s;
-    const z = zBase * (0.5 + r * 0.5);
+    const x = hx * 0.18 * s;
+    const y = (hy * 0.18 + 0.3) * s;
+    const z = -MAX_DEPTH * bulge; // 负Z方向鼓起
     
     pos.push(new THREE.Vector3(x, y, z));
   }
@@ -134,34 +135,36 @@ function makePlaceholder(i) {
   x.fillText(`${i+1}`, 128, 120); x.font = '28px serif'; x.fillText('💖', 128, 180);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
+
+// 修复：递归尝试所有路径，确保图片能加载
 function loadRealTex(i, mesh) {
   const paths = [`photos/${i+1}.jpg`,`photos/${i+1}.png`,`photos/${i+1}.jpeg`,`photos/photo_${i+1}.jpg`,`photos/IMG_${String(i+1).padStart(4,'0')}.jpg`];
-  for (const p of paths) { 
-    texLoader.load(p, t => { 
+  function tryLoad(index) {
+    if (index >= paths.length) return;
+    texLoader.load(paths[index], t => { 
       t.colorSpace = THREE.SRGBColorSpace; 
-      // A方案：设置各向异性过滤
       t.anisotropy = renderer.capabilities.getMaxAnisotropy();
       mesh.material.map = t; 
       mesh.material.needsUpdate = true; 
-    }, undefined, () => {}); 
-    return; 
+    }, undefined, () => tryLoad(index + 1));
   }
+  tryLoad(0);
 }
 
-// B方案：加载高清图
 function loadHDTex(photoIndex, mesh) {
   const i = photoIndex + 1;
   const hdPaths = [`photos/${i}_hd.jpg`,`photos/${i}_hd.png`,`photos/hd_${i}.jpg`,`photos/${i}_hd.jpeg`];
-  for (const p of hdPaths) {
-    texLoader.load(p, t => { 
+  function tryLoad(index) {
+    if (index >= hdPaths.length) return;
+    texLoader.load(hdPaths[index], t => { 
       t.colorSpace = THREE.SRGBColorSpace;
       t.anisotropy = renderer.capabilities.getMaxAnisotropy();
       mesh.material.map = t; 
       mesh.material.needsUpdate = true;
       mesh._isHD = true;
-    }, undefined, () => {});
-    return;
+    }, undefined, () => tryLoad(index + 1));
   }
+  tryLoad(0);
 }
 
 const photoGroup = new THREE.Group(); scene.add(photoGroup);
@@ -172,34 +175,39 @@ const photoGeo = new THREE.PlaneGeometry(PHOTO_SIZE, PHOTO_SIZE);
 
 for (let i = 0; i < PHOTO_COUNT; i++) {
   const g = new THREE.Group();
-  g.layers.enable(1); // 正常照片受Bloom影响
+  g.layers.enable(1);
   g.add(new THREE.Mesh(frameGeo, frameMat.clone()));
   const pm = new THREE.Mesh(photoGeo, new THREE.MeshStandardMaterial({ map: makePlaceholder(i), metalness: 0.05, roughness: 0.2 }));
   pm.position.z = 0.035; g.add(pm);
   const bm = new THREE.Mesh(photoGeo, new THREE.MeshStandardMaterial({ color: 0x1a1a2e, metalness: 0.3, roughness: 0.7 }));
   bm.position.z = -0.035; bm.rotation.y = Math.PI; g.add(bm);
   const pos = heartPositions[i]; g.position.copy(pos);
-  // 前面照片面向摄像机，后面照片面向z负方向
   const isFront = i < FRONT_COUNT;
   if (isFront) {
-    // 前面：面向摄像机 + 轻微倾斜
     const lookTarget = new THREE.Vector3(0, 0, 10);
     const tilt = pos.clone().normalize();
     lookTarget.add(tilt.multiplyScalar(0.3));
     g.lookAt(lookTarget);
   } else {
-    // 后面：面向z负方向 + 轻微倾斜
     const lookTarget = new THREE.Vector3(0, 0, -10);
     const tilt = pos.clone().normalize();
     lookTarget.add(tilt.multiplyScalar(0.3));
     g.lookAt(lookTarget);
   }
-  photos.push({ mesh: g, photoMesh: pm, heartPos: pos.clone(), heartQuat: g.quaternion.clone(), explodedPos: new THREE.Vector3(), explodedQuat: new THREE.Quaternion(), velocity: new THREE.Vector3(), angularVel: new THREE.Vector3(), floatOffset: Math.random() * Math.PI * 2, floatSpeed: 0.3 + Math.random() * 0.5, floatAmplitude: 0.02 + Math.random() * 0.03, zoomScale: 1, isCentered: false, centerTarget: new THREE.Vector3(), centerQuat: new THREE.Quaternion() });
+  // 修复：预分配 tempVec 避免每帧 new 对象引发 GC 卡顿
+  photos.push({ 
+    mesh: g, photoMesh: pm, heartPos: pos.clone(), heartQuat: g.quaternion.clone(), 
+    explodedPos: new THREE.Vector3(), explodedQuat: new THREE.Quaternion(), 
+    velocity: new THREE.Vector3(), angularVel: new THREE.Vector3(), 
+    floatOffset: Math.random() * Math.PI * 2, floatSpeed: 0.3 + Math.random() * 0.5, 
+    floatAmplitude: 0.02 + Math.random() * 0.03, zoomScale: 1, isCentered: false, 
+    centerTarget: new THREE.Vector3(), centerQuat: new THREE.Quaternion(),
+    tempVec: new THREE.Vector3()
+  });
   photoGroup.add(g);
 }
 setTimeout(() => photos.forEach((p, i) => setTimeout(() => loadRealTex(i, p.photoMesh), i * 50)), 500);
 
-// Particles
 const pGeo = new THREE.BufferGeometry();
 const pPos = new Float32Array(PARTICLE_COUNT * 3), pSiz = new Float32Array(PARTICLE_COUNT), pCol = new Float32Array(PARTICLE_COUNT * 3);
 for (let i = 0; i < PARTICLE_COUNT; i++) {
@@ -217,16 +225,15 @@ const pMat = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uPixelR
   fragmentShader: `varying vec3 vC; varying float vA; void main() { float d=length(gl_PointCoord-.5); if(d>.5)discard; gl_FragColor=vec4(vC,smoothstep(.5,.0,d)*vA); }`,
   transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
 const particles = new THREE.Points(pGeo, pMat);
-particles.layers.enable(1); // 粒子受Bloom影响
+particles.layers.enable(1);
 scene.add(particles);
 
-// Core glow
 const glowMat = new THREE.ShaderMaterial({ uniforms: { uTime:{value:0}, uC1:{value:new THREE.Color(0xff69b4)}, uC2:{value:new THREE.Color(0xffd700)} },
   vertexShader: `varying vec3 vN,vV; void main(){vN=normalize(normalMatrix*normal);vec4 m=modelViewMatrix*vec4(position,1.);vV=m.xyz;gl_Position=projectionMatrix*m;}`,
   fragmentShader: `uniform float uTime;uniform vec3 uC1,uC2;varying vec3 vN,vV;void main(){float f=pow(1.-abs(dot(normalize(vV),vN)),2.);float p=sin(uTime*3.)*.3+.7;gl_FragColor=vec4(mix(uC1,uC2,sin(uTime*1.5)*.5+.5),f*p*.8);}`,
   transparent: true, depthWrite: false, side: THREE.FrontSide, blending: THREE.AdditiveBlending });
 const coreGlow = new THREE.Mesh(new THREE.SphereGeometry(0.5, 32, 32), glowMat);
-coreGlow.layers.enable(1); // 核心光效受Bloom影响
+coreGlow.layers.enable(1);
 scene.add(coreGlow);
 
 let state = 'heart', explosionProgress = 0, targetExplosion = 0;
@@ -238,26 +245,30 @@ const raycaster = new THREE.Raycaster(), mouse2 = new THREE.Vector2();
 
 function resetZoom() { 
   photos.forEach(p => { 
+    if (p.isCentered) {
+      // 修复：将放大脱离 group 的照片移回 group，防止坐标偏移
+      scene.remove(p.mesh);
+      photoGroup.add(p.mesh);
+    }
     p.zoomScale = 1; 
     p.isCentered = false;
-    // 恢复原始材质
+    // 修复：正确释放临时 MeshBasicMaterial，防止内存泄漏
     if (p._originalMaterial) {
-      p.photoMesh.material.dispose(); // 释放MeshBasicMaterial
+      const matToDispose = p.photoMesh.material;
       p.photoMesh.material = p._originalMaterial;
-      p._originalMaterial.roughness = 0.2; // 恢复roughness
+      p._originalMaterial.roughness = 0.2; 
+      matToDispose.dispose(); 
       delete p._originalMaterial;
     }
-    // 问题3：恢复渲染顺序
     p.mesh.renderOrder = 0;
-    // 方案B：恢复Bloom影响
     p.mesh.layers.enable(1);
-    // B方案：如果加载了高清图，需要重新加载普通图
     if (p.photoMesh._isHD) {
       loadRealTex(photos.indexOf(p), p.photoMesh);
       p.photoMesh._isHD = false;
     }
   }); 
 }
+
 function triggerExplosion() {
   if (state === 'exploding') return; state = 'exploding'; targetExplosion = 1; resetZoom();
   photos.forEach(p => { const th=Math.random()*Math.PI*2, ph=Math.acos(2*Math.random()-1), r=EXPLOSION_RADIUS*(.5+Math.random()*.5); p.explodedPos.set(r*Math.sin(ph)*Math.cos(th), r*Math.sin(ph)*Math.sin(th), r*Math.cos(ph)*.5); p.explodedQuat.setFromEuler(new THREE.Euler(Math.random()*Math.PI*2, Math.random()*Math.PI*2, Math.random()*Math.PI*2)); p.angularVel.set((Math.random()-.5)*.02, (Math.random()-.5)*.02, (Math.random()-.5)*.02); p.velocity.copy(p.explodedPos.clone().normalize()).multiplyScalar(.3+Math.random()*.2); });
@@ -276,59 +287,59 @@ function getPhotoAt(cx, cy) {
 function calcCenterTarget() {
   const camForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
   const worldPos = camera.position.clone().add(camForward.multiplyScalar(PHOTO_CENTER_DIST));
-  const localPos = worldPos.clone(); photoGroup.worldToLocal(localPos);
-  const camLocalPos = camera.position.clone(); photoGroup.worldToLocal(camLocalPos);
-  const tempObj = new THREE.Object3D(); tempObj.position.copy(localPos); tempObj.lookAt(camLocalPos);
-  return { pos: localPos, quat: tempObj.quaternion.clone() };
+  const tempObj = new THREE.Object3D(); tempObj.position.copy(worldPos); tempObj.lookAt(camera.position);
+  return { pos: worldPos, quat: tempObj.quaternion.clone() };
 }
 
-// ============ 触摸交互（含点击空白关闭放大） ============
 canvas.addEventListener('touchstart', e => { e.preventDefault();
   if (e.touches.length === 1) { touch.active = true; touch.dragging = false; touch.pinching = false; touch.startTime = Date.now(); touch.startPos = { x: e.touches[0].clientX, y: e.touches[0].clientY }; touch.lastRot = { ...touch.rot }; }
   else if (e.touches.length === 2) { touch.pinching = true; touch.active = false; touch.pinchDist = touchDist(e.touches[0], e.touches[1]); touch.initZoom = touch.zoom; }
 }, { passive: false });
+
 canvas.addEventListener('touchmove', e => { e.preventDefault();
   if (touch.pinching && e.touches.length === 2) {
     const d = touchDist(e.touches[0], e.touches[1]);
     const ratio = d / touch.pinchDist;
-    // 问题2：如果有照片被放大，缩放照片本身；否则缩放场景
     const centeredPhoto = photos.find(p => p.isCentered);
     if (centeredPhoto) {
-      // 缩放照片本身，范围1.5~5倍
       centeredPhoto.zoomScale = Math.max(1.5, Math.min(5, PHOTO_SCALE * ratio));
     } else {
-      // 缩放场景
       touch.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, touch.initZoom / ratio));
     }
   }
-  else if (touch.active && e.touches.length === 1) { const dx = e.touches[0].clientX - touch.startPos.x, dy = e.touches[0].clientY - touch.startPos.y; if (Math.hypot(dx, dy) > CLICK_DIST) { touch.dragging = true; touch.rot.y = touch.lastRot.y + dx * 0.005; touch.rot.x = Math.max(-Math.PI/3, Math.min(Math.PI/3, touch.lastRot.x + dy * 0.005)); resetZoom(); } }
+  else if (touch.active && e.touches.length === 1) { 
+    const dx = e.touches[0].clientX - touch.startPos.x, dy = e.touches[0].clientY - touch.startPos.y; 
+    if (Math.hypot(dx, dy) > CLICK_DIST) { 
+      touch.dragging = true; 
+      touch.rot.y = touch.lastRot.y + dx * 0.005; 
+      touch.rot.x = Math.max(-Math.PI/3, Math.min(Math.PI/3, touch.lastRot.x + dy * 0.005)); 
+      resetZoom(); 
+    } 
+  }
 }, { passive: false });
+
 canvas.addEventListener('touchend', e => { e.preventDefault();
   if (touch.active && !touch.dragging && Date.now() - touch.startTime < CLICK_TIME) {
     const hit = getPhotoAt(touch.startPos.x, touch.startPos.y);
     if (hit) {
-      // 点击照片：放大到中间
       resetZoom();
       hit.isCentered = true; hit.zoomScale = PHOTO_SCALE;
+      photoGroup.remove(hit.mesh);
+      scene.add(hit.mesh);
       const t = calcCenterTarget(); hit.centerTarget.copy(t.pos); hit.centerQuat.copy(t.quat);
-      // 方案C：切换到MeshBasicMaterial，不受光照影响
+      
       const originalMat = hit.photoMesh.material;
       hit.photoMesh.material = new THREE.MeshBasicMaterial({
         map: originalMat.map,
         color: 0xffffff
       });
       hit.photoMesh.material.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      // 保存原始材质以便恢复
       hit._originalMaterial = originalMat;
-      // B方案：加载高清图
+      hit.mesh.renderOrder = 999;
+      hit.mesh.layers.disable(1);
       const photoIndex = photos.indexOf(hit);
       loadHDTex(photoIndex, hit.photoMesh);
-      // 问题3：移到scene最上层渲染
-      hit.mesh.renderOrder = 999;
-      // 方案B：放大的照片不受Bloom影响
-      hit.mesh.layers.disable(1);
     } else {
-      // 点击空白：关闭放大
       resetZoom();
     }
   }
@@ -336,13 +347,17 @@ canvas.addEventListener('touchend', e => { e.preventDefault();
   else if (e.touches.length === 1) { touch.pinching = false; touch.active = true; touch.startTime = Date.now(); touch.startPos = { x: e.touches[0].clientX, y: e.touches[0].clientY }; touch.lastRot = { ...touch.rot }; }
 }, { passive: false });
 
-// 鼠标点击也支持（桌面端）
 let mouseDown = false, mouseStartTime = 0, mouseStartPos = {x:0,y:0}, mouseDragged = false;
 canvas.addEventListener('mousedown', e => { mouseDown = true; mouseDragged = false; mouseStartTime = Date.now(); mouseStartPos = {x:e.clientX, y:e.clientY}; touch.lastRot = {...touch.rot}; });
 canvas.addEventListener('mousemove', e => {
   if (!mouseDown) return;
   const dx = e.clientX - mouseStartPos.x, dy = e.clientY - mouseStartPos.y;
-  if (Math.hypot(dx,dy) > CLICK_DIST) { mouseDragged = true; touch.dragging = true; touch.rot.y = touch.lastRot.y + dx*0.005; touch.rot.x = Math.max(-Math.PI/3, Math.min(Math.PI/3, touch.lastRot.x + dy*0.005)); resetZoom(); }
+  if (Math.hypot(dx,dy) > CLICK_DIST) { 
+    mouseDragged = true; touch.dragging = true; 
+    touch.rot.y = touch.lastRot.y + dx*0.005; 
+    touch.rot.x = Math.max(-Math.PI/3, Math.min(Math.PI/3, touch.lastRot.x + dy*0.005)); 
+    resetZoom(); 
+  }
 });
 canvas.addEventListener('mouseup', e => {
   if (mouseDown && !mouseDragged && Date.now() - mouseStartTime < CLICK_TIME) {
@@ -350,8 +365,10 @@ canvas.addEventListener('mouseup', e => {
     if (hit) { 
       resetZoom(); 
       hit.isCentered = true; hit.zoomScale = PHOTO_SCALE; 
+      photoGroup.remove(hit.mesh);
+      scene.add(hit.mesh);
       const t = calcCenterTarget(); hit.centerTarget.copy(t.pos); hit.centerQuat.copy(t.quat);
-      // 方案C：切换到MeshBasicMaterial
+      
       const originalMat = hit.photoMesh.material;
       hit.photoMesh.material = new THREE.MeshBasicMaterial({
         map: originalMat.map,
@@ -359,11 +376,8 @@ canvas.addEventListener('mouseup', e => {
       });
       hit.photoMesh.material.anisotropy = renderer.capabilities.getMaxAnisotropy();
       hit._originalMaterial = originalMat;
-      // 问题3：渲染在最上层
       hit.mesh.renderOrder = 999;
-      // 方案B：放大的照片不受Bloom影响
       hit.mesh.layers.disable(1);
-      // B方案：加载高清图
       const photoIndex = photos.indexOf(hit);
       loadHDTex(photoIndex, hit.photoMesh);
     }
@@ -372,14 +386,11 @@ canvas.addEventListener('mouseup', e => {
   mouseDown = false; mouseDragged = false; touch.dragging = false;
 });
 
-// 滚轮缩放
 canvas.addEventListener('wheel', e => { e.preventDefault(); touch.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, touch.zoom + e.deltaY * 0.01)); }, { passive: false });
 
-// ============ MediaPipe（script标签加载方式） ============
 setTimeout(() => { document.getElementById('loading').style.opacity = '0'; setTimeout(() => document.getElementById('loading').style.display = 'none', 800); }, 500);
 initMediaPipeWithRetry();
 
-// ============ 背景音乐 ============
 const audio = new Audio();
 audio.volume = 0.5;
 let playlist = [];
@@ -388,7 +399,6 @@ let musicLoading = true;
 let musicReadyResolve = null;
 const musicReady = new Promise(resolve => { musicReadyResolve = resolve; });
 
-// 检测音乐文件
 async function initMusic() {
   const maxSongs = 20;
   for (let i = 1; i <= maxSongs; i++) {
@@ -401,7 +411,6 @@ async function initMusic() {
     }
   }
   if (playlist.length > 0) {
-    // 随机顺序
     playlist.sort(() => Math.random() - 0.5);
     playSong(0);
   }
@@ -419,17 +428,14 @@ function playSong(index) {
 audio.addEventListener('ended', () => {
   currentSongIndex++;
   if (currentSongIndex >= playlist.length) {
-    // 所有歌播完，重新随机
     playlist.sort(() => Math.random() - 0.5);
     currentSongIndex = 0;
   }
   playSong(currentSongIndex);
 });
 
-// 首次交互后播放音乐
 function startMusicOnInteraction() {
   if (musicLoading) {
-    // 音乐正在加载，等待加载完成后再播放
     musicReady.then(() => {
       if (playlist.length > 0) {
         audio.play().then(() => {
@@ -439,7 +445,6 @@ function startMusicOnInteraction() {
       }
     });
   } else {
-    // 音乐已加载，直接播放
     if (playlist.length > 0) {
       audio.play().then(() => {
         document.removeEventListener('touchstart', startMusicOnInteraction);
@@ -454,7 +459,6 @@ document.addEventListener('click', startMusicOnInteraction);
 initMusic();
 function closeCamera() { if (currentStream) { currentStream.getTracks().forEach(t => t.stop()); currentStream = null; } }
 
-// 等待全局变量可用
 function waitForGlobal(name, timeout = 30000) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
@@ -494,7 +498,6 @@ async function initMediaPipe() {
   catch (e) { if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') throw {type:'camera_denied'}; if (e.name === 'NotFoundError') throw {type:'not_supported'}; throw e; }
   currentStream = stream; s.textContent = '⏳ 加载手势模型...';
   
-  // 等待script标签加载完成
   let Hands, Camera;
   const waitStart = Date.now();
   while (!window.Hands || !window.Camera) {
@@ -509,86 +512,44 @@ async function initMediaPipe() {
     const hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${f}` });
     hands.setOptions({ maxNumHands:1, modelComplexity:0, minDetectionConfidence:.3, minTrackingConfidence:.3 });
     
-    // 防抖计数器
     let openCount = 0, closeCount = 0;
-    const TRIGGER_THRESHOLD = 3; // 连续3帧才触发
+    const TRIGGER_THRESHOLD = 3;
     
     hands.onResults(r => { 
       if (!r.multiHandLandmarks || r.multiHandLandmarks.length === 0) {
-        // 没检测到手，重置计数
         openCount = 0;
         closeCount = 0;
-        // 调试信息：显示未检测到手
-        const statusEl = document.getElementById('gestureStatus');
-        if (statusEl && statusEl.classList.contains('ready')) {
-          statusEl.textContent = '🔍 未检测到手';
-          clearTimeout(statusEl._hideTimer);
-          statusEl._hideTimer = setTimeout(() => { statusEl.textContent = '✅ 手势已就绪'; }, 1500);
-        }
         return;
       }
       
       const lm = r.multiHandLandmarks[0];
-      
-      // 1. 检查手部大小（手掌宽度必须足够）
       const palmWidth = Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y);
       if (palmWidth < 0.15) {
-        // 手掌太小，可能是误识别
         openCount = 0;
         closeCount = 0;
-        // 调试信息：手掌太小
-        const statusEl = document.getElementById('gestureStatus');
-        if (statusEl && statusEl.classList.contains('ready')) {
-          statusEl.textContent = `🔍 手太小 (${palmWidth.toFixed(2)})`;
-          clearTimeout(statusEl._hideTimer);
-          statusEl._hideTimer = setTimeout(() => { statusEl.textContent = '✅ 手势已就绪'; }, 1500);
-        }
         return;
       }
       
-      // 2. 检查手部位置（必须在画面中心区域）
-      const handCenterX = lm[9].x; // 手腕中心
+      const handCenterX = lm[9].x;
       const handCenterY = lm[9].y;
       if (handCenterX < 0.15 || handCenterX > 0.85 || handCenterY < 0.1 || handCenterY > 0.9) {
-        // 手部在边缘，忽略
         openCount = 0;
         closeCount = 0;
-        // 调试信息：手部在边缘
-        const statusEl = document.getElementById('gestureStatus');
-        if (statusEl && statusEl.classList.contains('ready')) {
-          statusEl.textContent = `🔍 手在边缘 (${handCenterX.toFixed(2)},${handCenterY.toFixed(2)})`;
-          clearTimeout(statusEl._hideTimer);
-          statusEl._hideTimer = setTimeout(() => { statusEl.textContent = '✅ 手势已就绪'; }, 1500);
-        }
         return;
       }
       
-      // 更新手位置（用于视差效果）
       handPosition.x = -(handCenterX - 0.5) * 2.5;
       handPosition.y = -(handCenterY - 0.5) * 2.5;
       
-      // 3. 计算张开的手指数量（提高阈值）
       const tips = [8, 12, 16, 20];
       const pips = [6, 10, 14, 18];
       let ext = 0;
       for (let i = 0; i < 4; i++) {
-        // 手指尖端必须明显高于指关节（阈值0.05）
         if (lm[tips[i]].y < lm[pips[i]].y - 0.05) ext++;
       }
-      // 大拇指单独判断（提高阈值）
       if (Math.abs(lm[4].x - lm[3].x) > 0.08) ext++;
       
-      // 调试提示
-      const statusEl = document.getElementById('gestureStatus');
-      if (statusEl && statusEl.classList.contains('ready')) {
-        statusEl.textContent = `🖐️ ${ext}指 (${palmWidth.toFixed(2)})`;
-        clearTimeout(statusEl._hideTimer);
-        statusEl._hideTimer = setTimeout(() => { statusEl.textContent = '✅ 手势已就绪'; }, 1500);
-      }
-      
-      // 4. 防抖机制：连续3帧才触发
       if (ext >= 4) {
-        // 手掌张开
         openCount++;
         closeCount = 0;
         if (openCount >= TRIGGER_THRESHOLD) {
@@ -596,7 +557,6 @@ async function initMediaPipe() {
           openCount = 0;
         }
       } else if (ext <= 1) {
-        // 握拳
         closeCount++;
         openCount = 0;
         if (closeCount >= TRIGGER_THRESHOLD) {
@@ -604,7 +564,6 @@ async function initMediaPipe() {
           closeCount = 0;
         }
       } else {
-        // 中间状态，重置计数
         openCount = 0;
         closeCount = 0;
       }
@@ -623,13 +582,26 @@ function animate() {
   if (explosionProgress > .95 && targetExplosion === 1) state = 'exploded';
   if (explosionProgress < .05 && targetExplosion === 0) state = 'heart';
   photoGroup.rotation.x = touch.rot.x; photoGroup.rotation.y = touch.rot.y;
+  
   photos.forEach(p => {
     const zs = p.zoomScale;
-    if (p.isCentered) { p.mesh.position.lerp(p.centerTarget, 0.1); p.mesh.quaternion.slerp(p.centerQuat, 0.1); p.mesh.scale.setScalar(zs); return; }
+    if (p.isCentered) { 
+      p.mesh.position.lerp(p.centerTarget, 0.1); 
+      p.mesh.quaternion.slerp(p.centerQuat, 0.1); 
+      p.mesh.scale.setScalar(zs); 
+      return; 
+    }
     if (explosionProgress < .01) { p.mesh.position.copy(p.heartPos); p.mesh.quaternion.copy(p.heartQuat); p.mesh.scale.setScalar(hbScale * zs); }
     else if (explosionProgress > .99) { p.mesh.position.add(p.velocity); p.velocity.multiplyScalar(.995); p.mesh.rotation.x += p.angularVel.x; p.mesh.rotation.y += p.angularVel.y; p.mesh.rotation.z += p.angularVel.z; p.mesh.position.y += Math.sin(time*p.floatSpeed+p.floatOffset)*p.floatAmplitude; p.mesh.position.x += Math.cos(time*p.floatSpeed*.7+p.floatOffset)*p.floatAmplitude*.5; p.mesh.scale.setScalar(zs); }
-    else { p.mesh.position.lerp(new THREE.Vector3().lerpVectors(p.heartPos, p.explodedPos, explosionProgress), .08); p.mesh.quaternion.slerpQuaternions(p.heartQuat, p.explodedQuat, explosionProgress); p.mesh.scale.setScalar(THREE.MathUtils.lerp(hbScale, 1, explosionProgress) * zs); }
+    else { 
+      // 修复：复用预分配的 tempVec，避免每帧 new 导致 GC 频繁卡顿
+      p.tempVec.lerpVectors(p.heartPos, p.explodedPos, explosionProgress);
+      p.mesh.position.lerp(p.tempVec, .08); 
+      p.mesh.quaternion.slerpQuaternions(p.heartQuat, p.explodedQuat, explosionProgress); 
+      p.mesh.scale.setScalar(THREE.MathUtils.lerp(hbScale, 1, explosionProgress) * zs); 
+    }
   });
+  
   coreLight.intensity = 3 * hbScale * (1 - explosionProgress * .5); coreLight2.intensity = 1.5 * hbScale * (1 - explosionProgress * .5);
   pMat.uniforms.uTime.value = time;
   cameraTarget.x += (handPosition.x * 3 - cameraTarget.x) * .03; cameraTarget.y += (-handPosition.y * 2 - cameraTarget.y) * .03;
